@@ -21,11 +21,11 @@ int main(void) {
     while(1) {
         for(int i = 0; i <= 7; i++) {
             GPIOA_ODR = (1 << i);
-            delay(300000);
+            delay(100000);
         }
-        for(int i = 7; i > 0; i--){
+        for(int i = 7; i > 1; i--){
             GPIOA_ODR = (1 << (i - 1));
-            delay(300000);
+            delay(100000);
         }
     }
 }
