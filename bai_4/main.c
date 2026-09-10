@@ -19,9 +19,9 @@ void delay(volatile uint32_t time)
 }
 
 int main(void){
-    RCC_APB2ENR |= (1 << 2);
-    GPIOA_CRL = 0x00000028;
-    GPIOA_ODR |= (1 << BTN_PIN);
+    RCC_APB2ENR |= (1 << 2);        //enable GPIOA clock
+    GPIOA_CRL = 0x00000028;         //configure PA0 as input with pull-up and PA1 as output push-pull
+    GPIOA_ODR |= (1 << BTN_PIN);    //enable pull-up resistor for PA0
 
     int old_state = 0;
 
