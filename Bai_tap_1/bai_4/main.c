@@ -26,11 +26,11 @@ int main(void){
     int old_state = 0;
 
     while(1){
-        int new_state = (GPIOA_IDR >> BTN_PIN) & 1;
-        if (new_state == 0 && old_state == 1) {
-            GPIOA_ODR ^= (1 << LED_PIN);
+        int new_state = (GPIOA_IDR >> BTN_PIN) & 1;     //read the state of the button
+        if (new_state == 0 && old_state == 1) {         //button pressed (active low)
+            GPIOA_ODR ^= (1 << LED_PIN);                //toggle the LED
         }
-        old_state = new_state;
+        old_state = new_state;                          //update the old state
         delay(100000);
     }
 }
