@@ -35,5 +35,7 @@ SECTIONS
     *(.bss*)
     *(COMMON)
     _ebss = .;
+    PROVIDE ( end = . );
+    PROVIDE ( _end = . );
   } > RAM
 }

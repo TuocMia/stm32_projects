@@ -1,127 +1,198 @@
 #include "stm32f10x.h"
 #include "stm32f10x_conf.h"
-#include <string.h>
-#include <stdlib.h>
+#include "string.h"
+#include "stdio.h"
+#include "stdlib.h"
 
-#define RX_BUFFER_SIZE 64
+uint16_t PrescalerValue = 0;
 
-/* Biến nhận UART qua ngắt */
-volatile char rx_buffer[RX_BUFFER_SIZE];
-volatile uint8_t rx_index = 0;
-volatile uint8_t command_ready = 0;
+/* UART receive buffer and command state.
+   rx_buffer stores the latest command typed from the serial monitor.
+   cmd_ready tells the main loop a full command has been received. */
+char rx_buffer[16];
+uint8_t rx_index = 0;
+volatile uint8_t cmd_ready = 0;
 
-/* Trạng thái hệ thống */
-uint8_t led_state = 0;      // 0: OFF, 1: ON
-uint16_t last_percent = 50; // Mặc định 50% khi bật lần đầu
+/* LED control status.
+   led_state = 1 means LED is ON; 0 means OFF.
+   led_brightness stores the brightness level in percent (0..100). */
+uint8_t led_state = 0;
+uint8_t led_brightness = 0; // Brightness level (0-100)
 
-/* Nguyên mẫu hàm */
 void RCC_Configuration(void);
 void GPIO_Configuration(void);
-void TIM2_PWM_Init(void);
-void USART1_Init_Interrupt(void);
-void UART1_SendChar(char ch);
-void UART1_SendString(const char *str);
-void UART1_SendNumber(uint32_t num);
-void Process_Command(char *cmd);
+void TIM2_Configuration(void);
+void USART1_Configuration(void);
+void UART_SendString(const char *str);
 
 int main(void)
 {
+    /* Initialize all peripheral blocks used by the project:
+       - clock tree
+       - GPIO pins
+       - timer for PWM output
+       - UART1 for serial commands */
     RCC_Configuration();
     GPIO_Configuration();
-    TIM2_PWM_Init();
-    USART1_Init_Interrupt();
+    TIM2_Configuration();
+    USART1_Configuration();
 
-    /* Khởi tạo ban đầu: Đèn OFF, duty = 0 */
-    TIM_SetCompare1(TIM2, 0);
+    /* Send startup message to the serial terminal. */
+    UART_SendString("START\r\n");
 
-    UART1_SendString("\r\n=== STM32F103 PWM LED Command Interface Ready ===\r\n");
-    UART1_SendString("Cac lenh hop le: ON!, OFF!, PWM:Percent%!, Status!\r\n");
-
+    /* Main loop: wait for incoming UART command, parse it, and execute action. */
     while (1)
     {
-        if (command_ready)
+        if(cmd_ready)
         {
-            Process_Command((char *)rx_buffer);
-            command_ready = 0; // Xóa cờ để nhận lệnh tiếp theo
+            /* Command: turn LED on */
+            if(strcmp(rx_buffer, "ON") == 0)
+            {
+                led_state = 1;
+                TIM_SetCompare1(TIM2, led_brightness * 10); // Set duty cycle based on brightness
+            }
+            /* Command: turn LED off */
+            else if(strcmp(rx_buffer, "OFF") == 0)
+            {
+                led_state = 0;
+                TIM_SetCompare1(TIM2, 0);
+
+            }
+            /* Command: report current LED state and brightness */
+            else if(strcmp(rx_buffer, "Status") == 0)
+            {
+                char status_msg[32];
+                sprintf(status_msg, "LED is %s, PWM: %d%%\r\n", led_state ? "ON" : "OFF", led_brightness);
+                UART_SendString(status_msg);
+            }
+            /* Command: set brightness, example: PWM:50% */
+            else if(strncmp(rx_buffer, "PWM:", 4) == 0)
+            {
+                int new_brightness;
+                if(sscanf(rx_buffer, "PWM:%d%%", &new_brightness) == 1)
+                {
+                    if(new_brightness >= 0 && new_brightness <= 100)
+                    {
+                        led_brightness = new_brightness;
+                        if(led_state)
+                        {
+                            TIM_SetCompare1(TIM2, led_brightness * 10); // Update duty cycle
+                        }
+                    }
+                }
+            }
+
+            /* Reset receive buffer so next command can be received. */
+            rx_index = 0;
+            memset(rx_buffer, 0, sizeof(rx_buffer));
+            cmd_ready = 0;
         }
     }
 }
 
-/* ================== Cấu hình Clock ================== */
 void RCC_Configuration(void)
 {
+    /* Configure the clock for the peripherals used:
+       - TIM2: timer used to generate PWM for the LED
+       - GPIOA: used for PA0 (PWM), PA9 (TX), and PA10 (RX)
+       - AFIO: enables alternate function capability
+       - USART1: serial communication with the computer
+
+       RCC_APB1PeriphClockCmd: enables the APB1 bus clock (timers, etc.)
+       RCC_APB2PeriphClockCmd: enables the APB2 bus clock (GPIO, AFIO, USART1)
+    */
     RCC_APB1PeriphClockCmd(RCC_APB1Periph_TIM2, ENABLE);
-    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA | RCC_APB2Periph_USART1, ENABLE);
+    RCC_APB2PeriphClockCmd(RCC_APB2Periph_GPIOA | RCC_APB2Periph_AFIO | RCC_APB2Periph_USART1, ENABLE);
 }
 
-/* ================== Cấu hình GPIO ================== */
 void GPIO_Configuration(void)
 {
     GPIO_InitTypeDef gpio;
 
-    /* PA0: TIM2_CH1 (PWM Output) */
-    gpio.GPIO_Pin = GPIO_Pin_0;
+    /* Configure GPIO for PWM and UART:
+       - PA0: TIM2_CH1 -> PWM output to the LED
+       - PA9: USART1_TX -> transmits serial data to the PC
+       - PA10: USART1_RX -> receives serial data from the PC
+
+       GPIO_Mode_AF_PP: alternate function, push-pull output mode
+       GPIO_Mode_IN_FLOATING: RX pin receives floating input signals
+    */
+    gpio.GPIO_Pin = GPIO_Pin_0 | GPIO_Pin_9;
     gpio.GPIO_Mode = GPIO_Mode_AF_PP;
     gpio.GPIO_Speed = GPIO_Speed_50MHz;
     GPIO_Init(GPIOA, &gpio);
 
-    /* PA9: USART1_TX */
-    gpio.GPIO_Pin = GPIO_Pin_9;
-    gpio.GPIO_Mode = GPIO_Mode_AF_PP;
-    gpio.GPIO_Speed = GPIO_Speed_50MHz;
-    GPIO_Init(GPIOA, &gpio);
-
-    /* PA10: USART1_RX */
     gpio.GPIO_Pin = GPIO_Pin_10;
     gpio.GPIO_Mode = GPIO_Mode_IN_FLOATING;
     GPIO_Init(GPIOA, &gpio);
 }
 
-/* ================== Cấu hình PWM TIM2 ================== */
-void TIM2_PWM_Init(void)
+void TIM2_Configuration(void)
 {
     TIM_TimeBaseInitTypeDef tim;
     TIM_OCInitTypeDef tim_oc;
 
-    /* Clock counter = 72MHz / 72 = 1MHz */
-    uint16_t prescalerValue = (uint16_t)(SystemCoreClock / 1000000) - 1;
+    /* Configure Timer 2 to generate PWM for the LED.
 
-    /* Tần số PWM = 1MHz / 1000 = 1kHz (độ phân giải 0 - 1000) */
-    tim.TIM_Period = 1000 - 1;
-    tim.TIM_Prescaler = prescalerValue;
+       1) Set the timer base:
+          - SystemCoreClock = 72 MHz
+          - Prescaler = (72 MHz / 1 MHz) - 1 = 71
+          -> timer clock after prescaler = 1 MHz
+
+       2) Set the PWM period:
+          - TIM_Period = 1000 - 1 = 999
+          - PWM frequency = 1 MHz / 1000 = 1 kHz
+          - one PWM cycle is 1 ms
+
+       3) Brightness values from 0..100 are converted to duty cycle values from 0..1000:
+          - 50% => 500
+          - 100% => 1000
+    */
+    PrescalerValue = (uint16_t) (SystemCoreClock / 1000000) - 1; // 1 MHz timer clock
+
+    tim.TIM_Period = 1000 - 1; // 1 kHz PWM frequency
+    tim.TIM_Prescaler = PrescalerValue;
     tim.TIM_ClockDivision = 0;
     tim.TIM_CounterMode = TIM_CounterMode_Up;
     TIM_TimeBaseInit(TIM2, &tim);
 
-    tim_oc.TIM_OCMode = TIM_OCMode_PWM1;
-    tim_oc.TIM_OutputState = TIM_OutputState_Enable;
-    tim_oc.TIM_Pulse = 0;
-    tim_oc.TIM_OCPolarity = TIM_OCPolarity_High;
+    tim_oc.TIM_OCMode = TIM_OCMode_PWM1;                // PWM mode 1
+    tim_oc.TIM_OutputState = TIM_OutputState_Enable;    // Enable output channel
+    tim_oc.TIM_Pulse = led_brightness * 10;             // Initial duty cycle value
+    tim_oc.TIM_OCPolarity = TIM_OCPolarity_High;        // Active high polarity
     TIM_OC1Init(TIM2, &tim_oc);
 
-    TIM_OC1PreloadConfig(TIM2, TIM_OCPreload_Enable);
-    TIM_ARRPreloadConfig(TIM2, ENABLE);
-    TIM_Cmd(TIM2, ENABLE);
+    TIM_OC1PreloadConfig(TIM2, TIM_OCPreload_Enable);   // Enable PWM preload
+    TIM_ARRPreloadConfig(TIM2, ENABLE);                 // Enable auto-reload register update
+    TIM_Cmd(TIM2, ENABLE);                              // Start the timer
 }
 
-/* ================== Cấu hình USART1 & Ngắt NVIC ================== */
-void USART1_Init_Interrupt(void)
+void USART1_Configuration(void)
 {
-    USART_InitTypeDef usart;
     NVIC_InitTypeDef nvic;
+    USART_InitTypeDef usart;
 
+    /* Configure USART1 for serial communication with the PC:
+       - Baudrate = 115200 bps
+       - Word length = 8 bits
+       - Stop bits = 1
+       - Parity = none
+       - Mode = Tx + Rx
+       - No hardware flow control
+
+       USART_ITConfig(..., USART_IT_RXNE, ENABLE): enable interrupt on new received data
+       NVIC_Init: register the USART1_IRQn interrupt for ISR handling
+    */
     usart.USART_BaudRate = 115200;
     usart.USART_WordLength = USART_WordLength_8b;
     usart.USART_StopBits = USART_StopBits_1;
     usart.USART_Parity = USART_Parity_No;
+    usart.USART_Mode = USART_Mode_Tx | USART_Mode_Rx;
     usart.USART_HardwareFlowControl = USART_HardwareFlowControl_None;
-    usart.USART_Mode = USART_Mode_Rx | USART_Mode_Tx;
     USART_Init(USART1, &usart);
 
-    /* Bật ngắt nhận USART1 (RXNE) */
     USART_ITConfig(USART1, USART_IT_RXNE, ENABLE);
 
-    /* Cấu hình NVIC cho kênh ngắt USART1 */
     nvic.NVIC_IRQChannel = USART1_IRQn;
     nvic.NVIC_IRQChannelPreemptionPriority = 0;
     nvic.NVIC_IRQChannelSubPriority = 0;
@@ -131,139 +202,34 @@ void USART1_Init_Interrupt(void)
     USART_Cmd(USART1, ENABLE);
 }
 
-/* ================== Trình phục vụ ngắt USART1 ================== */
-void USART1_IRQHandler(void)
+void UART_SendString(const char *str)
 {
-    if (USART_GetITStatus(USART1, USART_IT_RXNE) != RESET)
-    {
-        char ch = (char)USART_ReceiveData(USART1);
-
-        /* Nếu chưa xử lý xong lệnh trước, bỏ qua byte mới để tránh tràn */
-        if (!command_ready)
-        {
-            if (ch == '!')
-            {
-                rx_buffer[rx_index] = '\0'; // Kết thúc chuỗi C
-                rx_index = 0;
-                command_ready = 1;          // Báo main xử lý
-            }
-            else if (ch != '\r' && ch != '\n')
-            {
-                if (rx_index < (RX_BUFFER_SIZE - 1))
-                {
-                    rx_buffer[rx_index++] = ch;
-                }
-            }
-        }
-    }
-}
-
-/* ================== Xử lý chuỗi lệnh ================== */
-void Process_Command(char *cmd)
-{
-    /* Lệnh ON */
-    if (strcmp(cmd, "ON") == 0)
-    {
-        led_state = 1;
-        /* Chuyển sang ON: đặt duty tương ứng với last_percent (0-100% -> 0-1000) */
-        TIM_SetCompare1(TIM2, last_percent * 10);
-        UART1_SendString("[ACK] LED da BAT, do sang: ");
-        UART1_SendNumber(last_percent);
-        UART1_SendString("%\r\n");
-    }
-    /* Lệnh OFF */
-    else if (strcmp(cmd, "OFF") == 0)
-    {
-        led_state = 0;
-        TIM_SetCompare1(TIM2, 0);
-        UART1_SendString("[ACK] LED da TAT\r\n");
-    }
-    /* Lệnh PWM:Percent% (Ví dụ: PWM:75%) */
-    else if (strncmp(cmd, "PWM:", 4) == 0)
-    {
-        char *ptr = cmd + 4;
-        int percent = atoi(ptr);
-
-        if (percent >= 0 && percent <= 100)
-        {
-            last_percent = (uint16_t)percent;
-
-            if (led_state == 1)
-            {
-                /* Đang ON: cập nhật độ sáng thực tế ngay lập tức */
-                TIM_SetCompare1(TIM2, last_percent * 10);
-                UART1_SendString("[ACK] Cap nhat do sang truc tiep: ");
-            }
-            else
-            {
-                /* Đang OFF: chỉ lưu cấu hình, không thay đổi độ sáng thực tế */
-                UART1_SendString("[ACK] Luu cau hinh (Den dang OFF): ");
-            }
-            UART1_SendNumber(last_percent);
-            UART1_SendString("%\r\n");
-        }
-        else
-        {
-            UART1_SendString("[ERR] Gia tri Percent khong hop le (0-100)!\r\n");
-        }
-    }
-    /* Lệnh Status */
-    else if (strcmp(cmd, "Status") == 0)
-    {
-        UART1_SendString("[STATUS] Trang thai: ");
-        if (led_state == 1)
-        {
-            UART1_SendString("ON | Do sang: ");
-        }
-        else
-        {
-            UART1_SendString("OFF | Muc cau hinh gan nhat: ");
-        }
-        UART1_SendNumber(last_percent);
-        UART1_SendString("%\r\n");
-    }
-    else
-    {
-        UART1_SendString("[ERR] Lenh khong xac dinh: ");
-        UART1_SendString(cmd);
-        UART1_SendString("\r\n");
-    }
-}
-
-/* ================== Các hàm gửi UART ================== */
-void UART1_SendChar(char ch)
-{
-    USART_SendData(USART1, (uint8_t)ch);
-    while (USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET);
-}
-
-void UART1_SendString(const char *str)
-{
+    /* Send a null-terminated string over USART1.
+       This function is used to print messages like START and status replies. */
     while (*str)
     {
-        UART1_SendChar(*str++);
+        USART_SendData(USART1, *str++);
+        while (USART_GetFlagStatus(USART1, USART_FLAG_TXE) == RESET);
     }
 }
 
-void UART1_SendNumber(uint32_t num)
+void USART1_IRQHandler(void)
 {
-    char buf[12];
-    int i = 0;
-
-    if (num == 0)
+    /* UART receive interrupt.
+       - Read each incoming byte from the data register.
+       - Store characters in rx_buffer until '!' arrives.
+       - On '!', terminate the string and set cmd_ready = 1 so the main loop can parse it. */
+    if (USART_GetITStatus(USART1, USART_IT_RXNE) != RESET)
     {
-        UART1_SendChar('0');
-        return;
-    }
+        char c = USART_ReceiveData(USART1);
 
-    while (num > 0)
-    {
-        buf[i++] = (char)((num % 10) + '0');
-        num /= 10;
-    }
-
-    while (i > 0)
-    {
-        UART1_SendChar(buf[--i]);
+        if(c == '!'){
+            rx_buffer[rx_index] = '\0'; // Null-terminate the string
+            cmd_ready = 1;
+        }
+        else if(rx_index < sizeof(rx_buffer) - 1 && !cmd_ready) {
+            rx_buffer[rx_index++] = c;
+        }
+        USART_ClearITPendingBit(USART1, USART_IT_RXNE);
     }
 }
