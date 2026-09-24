@@ -1,4 +1,4 @@
-STD_LIB = ../../../STM32F10x_StdPeriph_Lib_V3.5.0/Libraries
+STD_LIB = ../../STM32F10x_StdPeriph_Lib_V3.5.0/Libraries
 
 CC = arm-none-eabi-gcc
 OBJCOPY = arm-none-eabi-objcopy
