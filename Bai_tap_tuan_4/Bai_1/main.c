@@ -39,9 +39,9 @@ void led_task(void *task_parameter)
 
     for(;;){
         GPIO_SetBits(led->GPIOx, led->GPIO_Pin);
-        vTaskDelay(period_ms / 2);
+        vTaskDelay(pdMS_TO_TICKS(period_ms / 2));
         GPIO_ResetBits(led->GPIOx, led->GPIO_Pin);
-        vTaskDelay(period_ms / 2);
+        vTaskDelay(pdMS_TO_TICKS(period_ms / 2));
     }
 }
 
