@@ -15,16 +15,19 @@ void I2C_ReadMulti(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, uint8_t co
 
 volatile uint32_t ms_ticks = 0;
 
+/* Provides the 1 ms time base used by the sensor driver. */
 void SysTick_Handler(void)
 {
     ms_ticks++;
 }
 
+/* Returns the number of milliseconds elapsed since startup. */
 uint32_t HAL_GetTick(void)
 {
     return ms_ticks;
 }
 
+/* Initializes the MCU peripherals, starts the VL53L0X, and prints measurements. */
 int main(void)
 {
     RCC_Configuration();
@@ -62,6 +65,7 @@ int main(void)
     }
 }
 
+/* Enables the clocks required by GPIO, I2C1, and USART1. */
 void RCC_Configuration(void)
 {
     RCC_APB1PeriphClockCmd(RCC_APB1Periph_I2C1, ENABLE);
@@ -74,6 +78,7 @@ void RCC_Configuration(void)
     );
 }
 
+/* Configures PB6 and PB7 as the open-drain I2C1 pins. */
 void GPIO_I2C_Configuration(void)
 {
     GPIO_InitTypeDef gpio;
@@ -84,6 +89,7 @@ void GPIO_I2C_Configuration(void)
     GPIO_Init(GPIOB, &gpio);
 }
 
+/* Configures I2C1 as a 100 kHz, 7-bit-addressed master. */
 void I2C1_Configuration(void)
 {
     I2C_InitTypeDef i2c;
@@ -99,6 +105,7 @@ void I2C1_Configuration(void)
     I2C_Cmd(I2C1, ENABLE);
 }
 
+/* Configures USART1 for 115200 baud serial communication. */
 void UART_Configuration(void)
 {
     GPIO_InitTypeDef gpio;
@@ -123,6 +130,7 @@ void UART_Configuration(void)
     USART_Cmd(USART1, ENABLE);
 }
 
+/* Sends a null-terminated string through USART1. */
 void UART_SendString(const char *str)
 {
     while (*str)
@@ -132,6 +140,7 @@ void UART_SendString(const char *str)
     }
 }
 
+/* Writes one byte to a register on an I2C device. */
 uint8_t I2C_WriteReg(uint8_t dev_addr, uint8_t reg_addr, uint8_t data)
 {
     I2C_GenerateSTART(I2C1, ENABLE);
@@ -150,6 +159,7 @@ uint8_t I2C_WriteReg(uint8_t dev_addr, uint8_t reg_addr, uint8_t data)
     return 0;
 }
 
+/* Reads one byte from a register on an I2C device. */
 uint8_t I2C_ReadReg(uint8_t dev_addr, uint8_t reg_addr)
 {
     uint8_t value;
@@ -179,6 +189,7 @@ uint8_t I2C_ReadReg(uint8_t dev_addr, uint8_t reg_addr)
     return value;
 }
 
+/* Writes several consecutive bytes starting at an I2C register. */
 void I2C_WriteMulti(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, uint8_t count)
 {
     I2C_GenerateSTART(I2C1, ENABLE);
@@ -199,6 +210,7 @@ void I2C_WriteMulti(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, uint8_t c
     I2C_GenerateSTOP(I2C1, ENABLE);
 }
 
+/* Reads several consecutive bytes starting at an I2C register. */
 void I2C_ReadMulti(uint8_t dev_addr, uint8_t reg_addr, uint8_t *data, uint8_t count)
 {
     I2C_GenerateSTART(I2C1, ENABLE);
